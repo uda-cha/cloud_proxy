@@ -1,0 +1,73 @@
+version: 2.1
+
+executors:
+  default:
+    docker:
+      - image: google/cloud-sdk:312.0.0-alpine
+
+commands:
+  docker_build:
+    steps:
+      - run:
+          name: docker build
+          command: |
+            cd app/
+            docker build . \
+              -t asia.gcr.io/${GOOGLE_PROJECT_ID}/${CIRCLE_PROJECT_REPONAME}:${CIRCLE_SHA1} \
+              --build-arg USERNAME=${PROXY_USER_NAME} \
+              --build-arg PASSWORD=${PROXY_PASSWORD}
+
+jobs:
+  test-job:
+    executor:
+      name: default
+    steps:
+      - setup_remote_docker
+      - checkout
+      - docker_build
+      - run:
+          name: test
+          command: |
+            cd app/
+            docker run --rm -it \
+              asia.gcr.io/${GOOGLE_PROJECT_ID}/${CIRCLE_PROJECT_REPONAME}:${CIRCLE_SHA1} \
+              squid -k parse
+
+  deploy-job:
+    executor:
+      name: default
+    steps:
+      - run:
+          name: gcloud config
+          command: |
+            echo $GCLOUD_SERVICE_KEY | gcloud auth activate-service-account --key-file=-
+            gcloud --quiet config set project ${GOOGLE_PROJECT_ID}
+            gcloud --quiet config set compute/zone ${GOOGLE_COMPUTE_ZONE}
+            gcloud auth configure-docker --quiet --project ${GOOGLE_PROJECT_ID}
+      - setup_remote_docker
+      - checkout
+      - docker_build
+      - run:
+          name: docker push
+          command: |
+            docker push asia.gcr.io/${GOOGLE_PROJECT_ID}/${CIRCLE_PROJECT_REPONAME}:${CIRCLE_SHA1}
+      - run:
+          name: gcloud run deploy
+          command: |
+            gcloud run deploy cloud-proxy \
+              --platform managed \
+              --region ${GOOGLE_COMPUTE_ZONE} \
+              --cpu 1 \
+              --memory 256M \
+              --max-instances 50 \
+              --timeout=60s \
+              --port 8080 \
+              --image asia.gcr.io/${GOOGLE_PROJECT_ID}/${CIRCLE_PROJECT_REPONAME}:${CIRCLE_SHA1}
+
+workflows:
+  deploy:
+    jobs:
+      - test-job
+      - deploy-job:
+          requires:
+            - test-job
