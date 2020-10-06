@@ -6,6 +6,15 @@ executors:
       - image: google/cloud-sdk:312.0.0-alpine
 
 commands:
+  gloud_config:
+    steps:
+      - run:
+          name: gcloud config
+          command: |
+            echo $GCLOUD_SERVICE_KEY | gcloud auth activate-service-account --key-file=-
+            gcloud --quiet config set project ${GOOGLE_PROJECT_ID}
+            gcloud --quiet config set compute/zone ${GOOGLE_COMPUTE_ZONE}-a
+            gcloud auth configure-docker --quiet --project ${GOOGLE_PROJECT_ID}
   docker_build:
     steps:
       - run:
@@ -32,37 +41,26 @@ jobs:
             docker run --rm -it \
               asia.gcr.io/${GOOGLE_PROJECT_ID}/${CIRCLE_PROJECT_REPONAME}:${CIRCLE_SHA1} \
               squid -k parse
+      - gloud_config
+      - run:
+          name: docker push
+          command: |
+            docker push asia.gcr.io/${GOOGLE_PROJECT_ID}/${CIRCLE_PROJECT_REPONAME}:${CIRCLE_SHA1}
 
   deploy-job:
     executor:
       name: default
     steps:
-      - run:
-          name: gcloud config
-          command: |
-            echo $GCLOUD_SERVICE_KEY | gcloud auth activate-service-account --key-file=-
-            gcloud --quiet config set project ${GOOGLE_PROJECT_ID}
-            gcloud --quiet config set compute/zone ${GOOGLE_COMPUTE_ZONE}
-            gcloud auth configure-docker --quiet --project ${GOOGLE_PROJECT_ID}
-      - setup_remote_docker
-      - checkout
-      - docker_build
-      - run:
-          name: docker push
-          command: |
-            docker push asia.gcr.io/${GOOGLE_PROJECT_ID}/${CIRCLE_PROJECT_REPONAME}:${CIRCLE_SHA1}
+      - gloud_config
       - run:
           name: gcloud run deploy
           command: |
-            gcloud run deploy cloud-proxy \
-              --platform managed \
-              --region ${GOOGLE_COMPUTE_ZONE} \
-              --cpu 1 \
-              --memory 256M \
-              --max-instances 50 \
-              --timeout=60s \
-              --port 8080 \
-              --image asia.gcr.io/${GOOGLE_PROJECT_ID}/${CIRCLE_PROJECT_REPONAME}:${CIRCLE_SHA1}
+            gcloud compute instances update-container cloud-proxy \
+              --container-image asia.gcr.io/${GOOGLE_PROJECT_ID}/${CIRCLE_PROJECT_REPONAME}:${CIRCLE_SHA1}
+            gcloud compute firewall-rules create allow-8080 \
+              --direction ingress \
+              --action allow \
+              --rules tcp:8080 \
 
 workflows:
   deploy:
