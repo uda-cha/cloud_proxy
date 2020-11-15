@@ -27,7 +27,7 @@ commands:
               --build-arg PASSWORD=${PROXY_PASSWORD}
 
 jobs:
-  test-job:
+  test-and-push:
     executor:
       name: default
     steps:
@@ -47,25 +47,7 @@ jobs:
           command: |
             docker push asia.gcr.io/${GOOGLE_PROJECT_ID}/${CIRCLE_PROJECT_REPONAME}:${CIRCLE_SHA1}
 
-  deploy-job:
-    executor:
-      name: default
-    steps:
-      - gloud_config
-      - run:
-          name: gcloud run deploy
-          command: |
-            gcloud compute instances update-container cloud-proxy \
-              --container-image asia.gcr.io/${GOOGLE_PROJECT_ID}/${CIRCLE_PROJECT_REPONAME}:${CIRCLE_SHA1}
-            gcloud compute firewall-rules create allow-8080 \
-              --direction ingress \
-              --action allow \
-              --rules tcp:8080 \
-
 workflows:
   deploy:
     jobs:
-      - test-job
-      - deploy-job:
-          requires:
-            - test-job
+      - test-and-push
